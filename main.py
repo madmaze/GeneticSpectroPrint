@@ -7,6 +7,8 @@ import logging as log
 import time
 import pylab
 import argparse
+import hashlib
+import db
     
 def readDNAfna(fname):
     if not os.path.exists(fname):
@@ -24,24 +26,47 @@ def readDNAfna(fname):
                 info=l.strip(">")
             else:
                 seq += l.strip()
+    print "Length of genetic seq:", len(list(seq))
     data = do.dataObj(name=info, fname=fname, dataRaw=list(seq))
     return data
 
-def specgram(data, n):
-    steps = len(data)/n
-    specs=np.zeros((steps,n/2))
-    for s in range(steps):
-        # FFT of the real part, A/T
-        d1 = np.fft.rfft(data[(s*n):(s*n)+n].real).real
-        
-        # FFT of the imag part, C/G
-        d2 = np.fft.rfft(data[(s*n):(s*n)+n].imag).real
-        
-        # add the two pieces together
-        d=d1+d2
-        
-        # cut off half of the frequency range, since it repeats
-        specs[s][:]=d[0:n/2]
+def specgram(data, n, overlap=512):
+    #TODO: implement overlap of windows
+    if False is True:
+        steps = len(data)/n
+        specs=np.zeros((steps,n/2))
+        for s in range(steps):
+            # FFT of the real part, A/T
+            d1 = np.fft.rfft(data[(s*n):(s*n)+n].real).real
+            
+            # FFT of the imag part, C/G
+            d2 = np.fft.rfft(data[(s*n):(s*n)+n].imag).real
+            
+            # add the two pieces together
+            d=d1+d2
+            
+            # cut off half of the frequency range, since it repeats
+            specs[s][:]=d[0:n/2]
+    else:
+        # Method with overlap
+        x = 0
+        winSize = n
+        specs = []
+        while x+winSize <= len(data):
+            # FFT of the real part, A/T
+            d1 = np.fft.rfft(data[x:x+winSize].real).real
+            
+            # FFT of the imag part, C/G
+            d2 = np.fft.rfft(data[x:x+winSize].imag).real
+            
+            # add the two pieces together
+            d=d1+d2
+            
+            # cut off half of the frequency range, since it repeats
+            specs.append(d[0:n/2].tolist())
+            
+            x += winSize-overlap
+        specs=np.asarray(specs)
     return specs
 
 def chooseAnchors(spec, method):
@@ -76,10 +101,10 @@ def chooseAnchors(spec, method):
             pylab.show()
         
         # return anchor points
-        tmp[np.where(tmp>0)]=1    
+        tmp[np.where(tmp>0)]=1
         return tmp
     elif method == 2:
-        # non squared
+        # non squared (Better)
         cutoff = args.anchorThresh * np.std(spec)
         
         # swing everything positive
@@ -123,21 +148,26 @@ def chooseAnchors(spec, method):
 def getPointsInBox(x_time,y_freq, anchorMap, searchBox):
     res=[]
     x=x_time
-    print "x_time:%i  y_freq:%i" % (x_time,y_freq)
-    while x <= (x_time+searchBox[0]):
+    #print "x_time:%i  y_freq:%i" % (x_time,y_freq)
+    #print anchorMap.shape
+    while x <= anchorMap.shape[0]-1 and x <= (x_time+searchBox[0]):
         y=y_freq
-        while y <= (y_freq+searchBox[1]):
+        while y <= anchorMap.shape[1]-1 and y <= (y_freq+searchBox[1]):
             if anchorMap[x,y] == 1:
                 # Distance to points
                 # sqrt( (x1-x2)**2 + (y1-y2)**2 )
                 # hash f1:f2:Dist: t1
                 dist = np.sqrt( (x-x_time)**2 + (y-y_freq)**2 )
+                
                 #TODO: should the distance be rounded? to allow for small distance differences?
                 f1 = y_freq
                 f2 = y
                 t1 = x_time
                 #             [ Hash this | time1 ]
-                res.append( ( (f1,f2,dist), t1 ) )
+                #res.append( ( (f1,f2,dist), t1 ) )
+                #print str(f1),str(f2),str(dist)
+                hash = hashlib.sha1("%s;%s;%s" % (str(f1),str(f2),str(dist)))
+                res.append( ( hash.hexdigest(), t1 ) )
             y += 1
         x += 1
     return res
@@ -146,91 +176,128 @@ def getConstellations(anchorMap, searchBox=[10,10]):
     points = np.where(anchorMap==1)
     #print points, points, anchorMap.shape
     pointList = zip(points[0],points[1])
-    
+    constellations=[]
     
     for n,p in enumerate(pointList):
-        #print len(anchorMap[0])
-        #print anchorMap[p[0]:(p[0]+searchBox[0])][p[1]:(p[1]+searchBox[1])]
-        #print np.where(anchorMap[p[0]:(p[0]+searchBox[0])][p[1]:(p[1]+searchBox[1])]>0)
-        constellation = getPointsInBox(p[0],p[1],anchorMap, searchBox)
-        print constellation
-        print len(constellation)
         # p[0] is the time step
         # p[1] is the frequncy
-        print n, p, anchorMap[p[0],p[1]]
-        if n > 2:
-            exit()
+        #print n, p, anchorMap[p[0],p[1]]
+        
+        # from current point, get all points/hashes within 
+        constellations.extend(getPointsInBox(p[0],p[1],anchorMap, searchBox))
+        #print constellation
+        #print len(constellation)
+        
+        #if n > 10:
+        #    return constellations
+    
+    return constellations
 
 def main(args):
-    dnaSeq = None
-    stime=time.time()
-    if args.rawInput is not None:
-        dnaSeq = readDNAfna(args.rawInput)
-        dnaSeq.dataTrans=dnaSeq.dataTrans[0:512*1000]
-        dnaSeq.save("preprocessed/test2.b")
-    elif args.preprocInput is not None:
-        dnaSeq = do.dataObj(loadFile="preprocessed/test2.b")
-    else:
-        log.error("Must either have rawInput or preprocInput set")
+    if args.reinitDB:
+        dbcon = db.dbconn()
+        dbcon.clearTable()
+        dbcon.createTable()
+        print "reinitialized DB.."
         exit()
         
-    log.info("loadtime:" + str(time.time()-stime) )    
+    dnaSeq = None
+    stime=time.time()
     
-    n=args.windowSize
-    spec=specgram(dnaSeq.dataTrans[:n*args.specSize],n)
-    
-    if args.showPlots:
-        print "Spectrogram:"
-        img = pylab.imshow(np.transpose(spec))
-        pylab.colorbar(img)
-        pylab.show()
+    if args.rawInput is not None:
+        dnaSeq = readDNAfna(args.rawInput)
+        if args.specSize != 0:
+            dnaSeq.dataTrans=dnaSeq.dataTrans[0:args.windowSize*args.specSize]
+
+        #    dnaSeq.save("preprocessed/test2.b")
+        #elif args.preprocInput is not None:
+        #    dnaSeq = do.dataObj(loadFile="preprocessed/test2.b")
+        #else:
+        #    log.error("Must either have rawInput or preprocInput set")
+        #    exit()
+            
+        log.info("loadtime:" + str(time.time()-stime) )    
         
-        print "Distribution of Spectrogram"
-        h = np.histogram(spec,bins=100)
-        pylab.bar(h[1][1:],h[0])
-        pylab.autoscale()
-        pylab.show()
-    
-    if True is False:
-        spec2 = spec.copy()
-        #cutoff = 55.75#3 * np.std(spec2)
-        cutoff = args.anchorThresh * np.std(spec2)
-        print "std:", np.std(spec2)
-        print "cutoff:", args.anchorThresh * np.std(spec2)
-    
-        # create a set to subtract the center of the distribution
-        t1 = np.where(spec2.flatten() > (-cutoff))
-        t2 = np.where(spec2.flatten() < cutoff)
+        n=args.windowSize
+        if args.specSize != 0:
+            spec=specgram(dnaSeq.dataTrans[:n*args.specSize],n)
+        else:
+            spec=specgram(dnaSeq.dataTrans[:],n)
         
-        # get the intersection and delete from spec
-        c = np.intersect1d(t1[0],t2[0])
-        tmp=np.delete(spec2.flatten(), c)
+        if args.showPlots:
+            print "Spectrogram:"
+            img = pylab.imshow(np.transpose(spec))
+            pylab.colorbar(img)
+            pylab.show()
+            
+            print "Distribution of Spectrogram"
+            h = np.histogram(spec,bins=100)
+            pylab.bar(h[1][1:],h[0])
+            pylab.autoscale()
+            pylab.show()
         
-        # tmp now contains the left over pieces
-        print "tmplen:",len(tmp)
-        print np.min(tmp), np.max(tmp)
-        h = np.histogram(tmp,bins=100)
-        pylab.bar(h[1][1:],h[0])
-        pylab.ylim([0,4000])
-        pylab.show()
-    
-    # the anchorMap is a map of Ones and Zeros, every one representing an anchorpoint
-    anchorMap = chooseAnchors(spec, 2)
-    print "Selected %i Anchor points" % len(np.where(anchorMap>0)[0])
-    
-    getConstellations(anchorMap, searchBox=[10,10])
-    
+        if True is False:
+            spec2 = spec.copy()
+            #cutoff = 55.75#3 * np.std(spec2)
+            cutoff = args.anchorThresh * np.std(spec2)
+            print "std:", np.std(spec2)
+            print "cutoff:", args.anchorThresh * np.std(spec2)
+        
+            # create a set to subtract the center of the distribution
+            t1 = np.where(spec2.flatten() > (-cutoff))
+            t2 = np.where(spec2.flatten() < cutoff)
+            
+            # get the intersection and delete from spec
+            c = np.intersect1d(t1[0],t2[0])
+            tmp=np.delete(spec2.flatten(), c)
+            
+            # tmp now contains the left over pieces
+            print "tmplen:",len(tmp)
+            print np.min(tmp), np.max(tmp)
+            h = np.histogram(tmp,bins=100)
+            pylab.bar(h[1][1:],h[0])
+            pylab.ylim([0,4000])
+            pylab.show()
+        
+        # the anchorMap is a map of Ones and Zeros, every one representing an anchorpoint
+        anchorMap = chooseAnchors(spec, 2)
+        print "Selected %i Anchor points" % len(np.where(anchorMap>0)[0])
+        
+        fingerprints = getConstellations(anchorMap, searchBox=[args.searchBox,args.searchBox])
+        print "Generated %i fingerprints from anchorMap" % len(fingerprints)
+        dbcon = db.dbconn()
+        # insert into DB with filename as ID for now
+        dbcon.bulkInset(fingerprints, args.rawInput)
+    elif args.searchSeq != None:
+        # Lets search some stuff
+        dnaSeq = readDNAfna(args.searchSeq)
+        
+        spec=specgram(dnaSeq.dataTrans[:],args.windowSize)
+        
+        anchorMap = chooseAnchors(spec, 2)
+        
+        fingerprints = getConstellations(anchorMap, searchBox=[args.searchBox,args.searchBox])
+        
+        dbcon = db.dbconn()
+        
+        res = dbcon.searchIndex(fingerprints)
+    else:
+        "Derp nothing to do.."
+        exit()
     
 if __name__ == "__main__":
     #main("/home/madmaze/trash/DNA/Bacillus_anthracis/NC_003997.fna")
     parser = argparse.ArgumentParser(description="DNA fingerprinting")
-    parser.add_argument("-r", "--rawInput", dest="rawInput", default=None, help="Raw Input file (Default: ./data/hs_alt_HuRef_chr22.fa)")
-    parser.add_argument("-p", "--preprocInput", dest="preprocInput", default=None, help="Preprocessed Input file (Default: ./preprocessed/test3.b)")
+    parser.add_argument("-i", "--index", dest="rawInput", default=None, help="Raw Input file (Default: ./data/hs_alt_HuRef_chr22.fa)")
+    parser.add_argument("--searchSeq", dest="searchSeq", default=None, help="Search a sequence (Default: ./test/test.seq)")
+    #parser.add_argument("-p", "--preprocInput", dest="preprocInput", default=None, help="Preprocessed Input file (Default: ./preprocessed/test3.b)")
     parser.add_argument("-w", "--windowSize", dest="windowSize", default=1024, type=int, help="Window size (Default: 1024)")
     parser.add_argument("-o", "--overlap", dest="overlap", default=512, type=int, help="Overlap size (Default: 512)")
-    parser.add_argument("-s", "--specSize", dest="specSize", default=1000, type=int, help="SpecSize (Default: 1000)")
-    parser.add_argument("-a", "--anchorThresh", dest="anchorThresh", default=10, type=int, help="Anchor threshold in sigmas (Default: 10)")
+    parser.add_argument("-s", "--specSize", dest="specSize", default=0, type=int, help="SpecSize, number of window sizes. if zero then everything(Default: 0)")
+    parser.add_argument("-a", "--anchorThresh", dest="anchorThresh", default=3, type=int, help="Anchor threshold in sigmas (Default: 3)")
+    parser.add_argument("--searchBox", dest="searchBox", default=10, type=float, help="Search box size (Default: 10)")
     parser.add_argument("--showPlots", dest="showPlots", action="store_true", help="Show plots (Default: False)")
+    parser.add_argument("--reinitDB", dest="reinitDB", action="store_true", help="Reinit DB (Default: False)")
     args = parser.parse_args()
     main(args)
     
