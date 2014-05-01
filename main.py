@@ -70,6 +70,7 @@ def specgram(data, n, overlap=512):
     return specs
 
 def chooseAnchors(spec, method):
+    stime=time.time()
     if method == 1:
         # original
         spec *= spec
@@ -101,6 +102,7 @@ def chooseAnchors(spec, method):
             pylab.show()
         
         # return anchor points
+        log.info("ChooseAnchor(1) time: %fs" % (time.time()-stime))
         tmp[np.where(tmp>0)]=1
         return tmp
     elif method == 2:
@@ -140,6 +142,7 @@ def chooseAnchors(spec, method):
         
         # return anchor points
         #tmp[np.where(tmp>0)]=1
+        log.info("ChooseAnchor(2) time: %fs" % (time.time()-stime))
         return spec
     else:
         print "you fail"
@@ -173,6 +176,7 @@ def getPointsInBox(x_time,y_freq, anchorMap, searchBox):
     return res
 
 def getConstellations(anchorMap, searchBox=[10,10]):
+    stime=time.time()
     points = np.where(anchorMap==1)
     #print points, points, anchorMap.shape
     pointList = zip(points[0],points[1])
@@ -190,11 +194,15 @@ def getConstellations(anchorMap, searchBox=[10,10]):
         
         #if n > 10:
         #    return constellations
-    
+        
+    log.info("getConstellations time: %fs" % (time.time()-stime))
     return constellations
 
 def main(args):
     if args.reinitDB:
+        """
+        create database dnaindex; grant all privileges on dnaindex.* to 'dnafinger'@'localhost' identified by 'testpw';
+        """
         dbcon = db.dbconn()
         dbcon.clearTable()
         dbcon.createTable()
@@ -216,7 +224,8 @@ def main(args):
         #    log.error("Must either have rawInput or preprocInput set")
         #    exit()
             
-        log.info("loadtime:" + str(time.time()-stime) )    
+        log.info("loadtime: %fs" % (time.time()-stime) )
+        stime=time.time()
         
         n=args.windowSize
         if args.specSize != 0:
@@ -224,6 +233,8 @@ def main(args):
         else:
             spec=specgram(dnaSeq.dataTrans[:],n)
         
+        log.info("Spectrogram time: %fs" % (time.time()-stime))
+        stime=time.time()
         if args.showPlots:
             print "Spectrogram:"
             img = pylab.imshow(np.transpose(spec))
@@ -261,10 +272,10 @@ def main(args):
         
         # the anchorMap is a map of Ones and Zeros, every one representing an anchorpoint
         anchorMap = chooseAnchors(spec, 2)
-        print "Selected %i Anchor points" % len(np.where(anchorMap>0)[0])
+        log.info("Selected %i Anchor points" % len(np.where(anchorMap>0)[0]))
         
         fingerprints = getConstellations(anchorMap, searchBox=[args.searchBox,args.searchBox])
-        print "Generated %i fingerprints from anchorMap" % len(fingerprints)
+        log.info("Generated %i fingerprints from anchorMap" % len(fingerprints))
         dbcon = db.dbconn()
         # insert into DB with filename as ID for now
         dbcon.bulkInset(fingerprints, args.rawInput)
@@ -281,6 +292,10 @@ def main(args):
         dbcon = db.dbconn()
         
         res = dbcon.searchIndex(fingerprints)
+    elif args.DBstats is True:
+        dbcon = db.dbconn()
+        res = dbcon.getDBstats()
+        log.info("total:%i unique:%i" % res)
     else:
         "Derp nothing to do.."
         exit()
@@ -298,6 +313,11 @@ if __name__ == "__main__":
     parser.add_argument("--searchBox", dest="searchBox", default=10, type=float, help="Search box size (Default: 10)")
     parser.add_argument("--showPlots", dest="showPlots", action="store_true", help="Show plots (Default: False)")
     parser.add_argument("--reinitDB", dest="reinitDB", action="store_true", help="Reinit DB (Default: False)")
+    parser.add_argument("--DBstats", dest="DBstats", action="store_true", help="DB Stats (Default: False)")
     args = parser.parse_args()
+    
+    # setup logging
+    log.basicConfig(level=log.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
     main(args)
     

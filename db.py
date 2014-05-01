@@ -1,4 +1,6 @@
 import MySQLdb
+import time
+import logging as log
 #from MySQLdb.cursors import DictCursor
 
 class dbconn():
@@ -35,15 +37,26 @@ class dbconn():
         cur.close()
         
     def bulkInset(self, fingerprints, identifier):
-        print "Inserting fingerprints into database.."
+        stime=time.time()
+        log.info("Inserting fingerprints into database..")
         cur = self.db.cursor()
         for h,o in fingerprints:
             cur.execute("""INSERT IGNORE INTO fingerprints (hash, offset, dnaname) values ("%s",%i,"%s")""" % (h, o, identifier))
         self.db.commit()
         cur.close()
+        log.info("fingerprintInsert time:"+str(time.time()-stime))
+    
+    def getDBstats(self):
+        cur=self.db.cursor()
+        query="select count(hash) as hashes, count(distinct(hash)) as uhashes from fingerprints;"
+        cur.execute(query)
+        
+        for res in cur:
+            return res
         
     def searchIndex(self, fingerprints):
-        print "Number of fingerprints:",len(fingerprints)
+        log.info("Number of fingerprints to search: %i" % len(fingerprints))
+        stime=time.time()
         cur = self.db.cursor()
         
         fpHashtable = {}
@@ -55,14 +68,16 @@ class dbconn():
         query = "SELECT * FROM fingerprints WHERE hash IN ('%s')" %hashString 
         
         cur.execute(query)
-        r=[]
-        for (hash,off,id) in cur:
-            r.append((hash,off,id))
-        print "done with db.."
+        #r=[]
+        #for (hash,off,id) in cur:
+        #    r.append((hash,off,id))
+
+        #log.info("searchIndex[db query] time: %fs" % (time.time()-stime))
+        #stime=time.time()
         
         cnt=0
         results={}
-        for (hash,off,id) in r:
+        for (hash,off,id) in cur:
             cnt+=1
             if not results.has_key(id):
                 results[id]={}
@@ -75,7 +90,7 @@ class dbconn():
             #if cnt%10000 == 0 :
             #    print cnt
                 
-        print "results:",cnt
+        log.info("Num of Results: %i" % cnt)
         print len(results.keys())
         bestRes={}
         for id in results.keys():
@@ -85,5 +100,12 @@ class dbconn():
                     m = (len(results[id][dist]),dist)
             bestRes[id]=m
         
-        print bestRes
+        sortedRes = sorted(bestRes.items(), key=lambda t: t[1][0], reverse=True)
+        print "TOP 5:"
+        print "Score\tOffset\tID"
+        for n,r in enumerate(sortedRes):
+            if n<5:
+                print "%i\t%i\t%s" % (r[1][0],r[1][1],r[0])
+                
+        log.info("searchIndex[anaylze result] time: %fs" % (time.time()-stime))
         
