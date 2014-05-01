@@ -87,18 +87,24 @@ class dbconn():
                 results[id][t_dist]=[]
             results[id][t_dist].append((hash,off))
             
-            #if cnt%10000 == 0 :
-            #    print cnt
                 
         log.info("Num of Results: %i" % cnt)
         print len(results.keys())
         bestRes={}
+        
+        # if retBestAll == True, then multiple matches from one ID are allowed (slower)
+        # if retBestAll == False, then only the best match for each ID is returned
+        retBestAll=False
         for id in results.keys():
             m=(0,0)
-            for dist in results[id].keys():
-                if m[0] < len(results[id][dist]):
-                    m = (len(results[id][dist]),dist)
-            bestRes[id]=m
+            if retBestAll is True:
+                for dist in results[id].keys():
+                    bestRes[(id,dist)]=(len(results[id][dist]),dist)
+            else:
+                for dist in results[id].keys():
+                    if m[0] < len(results[id][dist]):
+                        m = (len(results[id][dist]),dist)
+                bestRes[id]=m
         
         sortedRes = sorted(bestRes.items(), key=lambda t: t[1][0], reverse=True)
         print "TOP 5:"
