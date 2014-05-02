@@ -89,9 +89,7 @@ class dbconn():
             
                 
         log.info("Num of Results: %i" % cnt)
-        print len(results.keys())
         bestRes={}
-        
         # if retBestAll == True, then multiple matches from one ID are allowed (slower)
         # if retBestAll == False, then only the best match for each ID is returned
         retBestAll=False

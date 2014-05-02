@@ -9,6 +9,9 @@ import pylab
 import argparse
 import hashlib
 import db
+from scipy.ndimage.filters import maximum_filter
+from scipy.ndimage.morphology import (generate_binary_structure,
+                                      iterate_structure, binary_erosion)
     
 def readDNAfna(fname):
     if not os.path.exists(fname):
@@ -144,6 +147,23 @@ def chooseAnchors(spec, method):
         #tmp[np.where(tmp>0)]=1
         log.info("ChooseAnchor(2) time: %fs" % (time.time()-stime))
         return spec
+    elif method==3:
+        # method as described in github worldveil/dejavu/fingerprint.py
+        # generate binary mask
+        binMask = generate_binary_structure(2,1)
+        grownBinMask = iterate_structure(binMask, 15)
+        
+        filter = maximum_filter(spec, footprint=grownBinMask)
+        #print filter
+        local_max = filter == spec
+        #print local_max
+        background = (spec == 0)
+        eroded_background = binary_erosion(background, structure=grownBinMask,
+                                       border_value=1)
+
+        # Boolean mask of arr2D with True at peaks
+        detected_peaks = local_max - eroded_background
+        return detected_peaks.astype(int)
     else:
         print "you fail"
         exit()
@@ -212,6 +232,9 @@ def main(args):
     dnaSeq = None
     stime=time.time()
     
+    if args.overlap == None:
+        args.overlap = args.windowSize/2
+    
     if args.rawInput is not None:
         dnaSeq = readDNAfna(args.rawInput)
         if args.specSize != 0:
@@ -229,9 +252,9 @@ def main(args):
         
         n=args.windowSize
         if args.specSize != 0:
-            spec=specgram(dnaSeq.dataTrans[:n*args.specSize],n)
+            spec=specgram(dnaSeq.dataTrans[:n*args.specSize],n, args.overlap)
         else:
-            spec=specgram(dnaSeq.dataTrans[:],n)
+            spec=specgram(dnaSeq.dataTrans[:],n, args.overlap)
         
         log.info("Spectrogram time: %fs" % (time.time()-stime))
         stime=time.time()
@@ -271,7 +294,7 @@ def main(args):
             pylab.show()
         
         # the anchorMap is a map of Ones and Zeros, every one representing an anchorpoint
-        anchorMap = chooseAnchors(spec, 2)
+        anchorMap = chooseAnchors(spec, args.anchorSelect)
         log.info("Selected %i Anchor points" % len(np.where(anchorMap>0)[0]))
         
         fingerprints = getConstellations(anchorMap, searchBox=[args.searchBox,args.searchBox])
@@ -280,18 +303,21 @@ def main(args):
         # insert into DB with filename as ID for now
         dbcon.bulkInset(fingerprints, args.rawInput)
     elif args.searchSeq != None:
+        stime=time.time()
         # Lets search some stuff
         dnaSeq = readDNAfna(args.searchSeq)
         
-        spec=specgram(dnaSeq.dataTrans[:],args.windowSize)
+        spec=specgram(dnaSeq.dataTrans[:],args.windowSize, args.overlap)
         
-        anchorMap = chooseAnchors(spec, 2)
+        anchorMap = chooseAnchors(spec, args.anchorSelect)
         
         fingerprints = getConstellations(anchorMap, searchBox=[args.searchBox,args.searchBox])
         
         dbcon = db.dbconn()
         
         res = dbcon.searchIndex(fingerprints)
+        
+        log.info("Total time: %fsec" % (time.time()-stime))
     elif args.DBstats is True:
         dbcon = db.dbconn()
         res = dbcon.getDBstats()
@@ -307,9 +333,10 @@ if __name__ == "__main__":
     parser.add_argument("--searchSeq", dest="searchSeq", default=None, help="Search a sequence (Default: ./test/test.seq)")
     #parser.add_argument("-p", "--preprocInput", dest="preprocInput", default=None, help="Preprocessed Input file (Default: ./preprocessed/test3.b)")
     parser.add_argument("-w", "--windowSize", dest="windowSize", default=1024, type=int, help="Window size (Default: 1024)")
-    parser.add_argument("-o", "--overlap", dest="overlap", default=512, type=int, help="Overlap size (Default: 512)")
+    parser.add_argument("-o", "--overlap", dest="overlap", default=None, type=int, help="Overlap size (Default: windowSize/2)")
     parser.add_argument("-s", "--specSize", dest="specSize", default=0, type=int, help="SpecSize, number of window sizes. if zero then everything(Default: 0)")
     parser.add_argument("-a", "--anchorThresh", dest="anchorThresh", default=3, type=int, help="Anchor threshold in sigmas (Default: 3)")
+    parser.add_argument("--anchorSelect", dest="anchorSelect", default=3, type=int, help="Anchor Selection method (Default: 3)")
     parser.add_argument("--searchBox", dest="searchBox", default=10, type=float, help="Search box size (Default: 10)")
     parser.add_argument("--showPlots", dest="showPlots", action="store_true", help="Show plots (Default: False)")
     parser.add_argument("--reinitDB", dest="reinitDB", action="store_true", help="Reinit DB (Default: False)")
