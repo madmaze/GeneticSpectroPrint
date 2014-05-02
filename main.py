@@ -327,11 +327,9 @@ def main(args):
         exit()
     
 if __name__ == "__main__":
-    #main("/home/madmaze/trash/DNA/Bacillus_anthracis/NC_003997.fna")
     parser = argparse.ArgumentParser(description="DNA fingerprinting")
     parser.add_argument("-i", "--index", dest="rawInput", default=None, help="Raw Input file (Default: ./data/hs_alt_HuRef_chr22.fa)")
     parser.add_argument("--searchSeq", dest="searchSeq", default=None, help="Search a sequence (Default: ./test/test.seq)")
-    #parser.add_argument("-p", "--preprocInput", dest="preprocInput", default=None, help="Preprocessed Input file (Default: ./preprocessed/test3.b)")
     parser.add_argument("-w", "--windowSize", dest="windowSize", default=1024, type=int, help="Window size (Default: 1024)")
     parser.add_argument("-o", "--overlap", dest="overlap", default=None, type=int, help="Overlap size (Default: windowSize/2)")
     parser.add_argument("-s", "--specSize", dest="specSize", default=0, type=int, help="SpecSize, number of window sizes. if zero then everything(Default: 0)")

@@ -20,7 +20,8 @@ class dbconn():
         
     def createTable(self):
         cur = self.db.cursor()
-        cur.execute("""CREATE TABLE fingerprints(
+        cur.execute("""
+        CREATE TABLE fingerprints(
                     hash varchar(40) not null,
                     offset int not null,
                     dnaname varchar(128) not null,
